@@ -9,7 +9,7 @@ ImpliedMoments <- function(optdta,moments = NULL,method = NULL,cluster = NULL){
     stop("\nOptSk-->error: Invalid choices of moments.\n", call. = FALSE)
   if(is.null(method)) method = "Intepolation"
   if(!is.null(cluster)){
-    ans = foreach(x = 1:length(unique(optdta$date)),.packages = c("OptSK"),.export = c("optdta"),.combine = "rbind") %dopar% {
+    ans = foreach(x = 1:length(unique(optdta$date)),.packages = c("OptSK"),.export = c("optdta","method","ExpChoice"),.combine = "rbind") %dopar% {
       data <- filter(optdta,date == unique(date)[x])
       ans <- data %>% distinct(date,maturity)
       if(!is.na(match("Var",ExpChoice) == 1)) {
