@@ -1,7 +1,7 @@
 #' @export interpolate
 #' @export arbitrageBounds
 #' @export BKM_intepolation
-#' @export BKM_trepezoidal
+#' @export BKM_trapezoidal
 #' @import RQuantLib
 #' @importFrom pracma pchipfun pchip
 interpolate <- function(date,maturity,zerodata){
@@ -56,15 +56,15 @@ BKM_intepolation <- function(mnes,vol,k=NULL,m = NULL,rate,mat,out){
   mu = er - 1 - er*V/2 - er*W/6  - er*X/24
   Var = er*V - mu^2
   Skew = (er*W - 3*mu*er*V + 2*mu^3)/(er*V - mu^2)^(3/2)
-  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2
+  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2 - 3
   ans <- ifelse(out == 1,Var,ifelse(out == 2,Skew,Kurt))
   return(ans)
 }
 
-BKM_trepezoidal = function(optdta,rate,mat,out){
+BKM_trapezoidal = function(optdta,rate,mat,out){
   er = exp(rate*mat)
-  S  = unique(testdtaM$SpotPrice)
-  KC <- testdtaM %>%
+  S  = unique(optdta$SpotPrice)
+  KC <- optdta %>%
     filter(Type == "C") %>%
     select(StrikePrice,optPrice) %>%
     mutate(deltaKC= ifelse(StrikePrice == min(StrikePrice),StrikePrice - S,StrikePrice-lag(StrikePrice))) %>%
@@ -75,7 +75,7 @@ BKM_trepezoidal = function(optdta,rate,mat,out){
     mutate(VC = ifelse(StrikePrice == min(StrikePrice),vc*optPrice*deltaKC,0.5*(vc*optPrice + lag(vc)*lag(optPrice))*deltaKC))%>%
     mutate(WC = ifelse(StrikePrice == min(StrikePrice),wc*optPrice*deltaKC,0.5*(wc*optPrice + lag(wc)*lag(optPrice))*deltaKC)) %>%
     mutate(XC = ifelse(StrikePrice == min(StrikePrice),xc*optPrice*deltaKC,0.5*(xc*optPrice + lag(xc)*lag(optPrice))*deltaKC))
-  KP <- testdtaM %>%
+  KP <- optdta %>%
     filter(Type == "P") %>%
     select(StrikePrice,optPrice)%>%
     arrange(desc(StrikePrice)) %>%
@@ -87,17 +87,53 @@ BKM_trepezoidal = function(optdta,rate,mat,out){
     mutate(VP = ifelse(StrikePrice == max(StrikePrice),vp*optPrice*deltaKP,0.5*(vp*optPrice + lag(vp)*lag(optPrice))*deltaKP))%>%
     mutate(WP = ifelse(StrikePrice == max(StrikePrice),wp*optPrice*deltaKP,0.5*(wp*optPrice + lag(wp)*lag(optPrice))*deltaKP)) %>%
     mutate(XP = ifelse(StrikePrice == max(StrikePrice),xp*optPrice*deltaKP,0.5*(xp*optPrice + lag(xp)*lag(optPrice))*deltaKP))
-  V = sum(KC$VC,KP$VP)
+  V = sum(KC$VC) + sum(KP$VP)
   W = sum(KC$WC)- sum(KP$WP)
-  X = sum(KC$XC,KP$XP)
+  X = sum(KC$XC) + sum(KP$XP)
   mu = er - 1 - er*V/2 - er*W/6  - er*X/24
   Var = er*V - mu^2
   Skew = (er*W - 3*mu*er*V + 2*mu^3)/(er*V - mu^2)^(3/2)
-  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2
+  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2- 3
   ans <- ifelse(out == 1,Var,ifelse(out == 2,Skew,Kurt))
   return(ans)
 }
 
+LE_contract = function(optdta,rate,mat,out=NULL){
+  er = exp(mat*rate)
+  S  = unique(optdta$SpotPrice)
+  B = 1/er
+  F = S*er
+  if(is.null(out)) out = "all"
+  KC <- optdta %>%
+    filter(Type == "C") %>%
+    select(StrikePrice,optPrice) %>%
+    mutate(deltaKC = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                           ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                  0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+    group_by(StrikePrice) %>%
+    mutate(VL = 2*deltaKC*(optPrice)/(B*StrikePrice^2)) %>%
+    mutate(VE = 2*deltaKC*(optPrice)/(B*StrikePrice*F))
+  KP <- optdta %>%
+    filter(Type == "P") %>%
+    select(StrikePrice,optPrice) %>%
+    mutate(deltaKP = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                            ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                   0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+    group_by(StrikePrice) %>%
+    mutate(VL = 2*deltaKP*(optPrice)/(B*StrikePrice^2)) %>%
+    mutate(VE = 2*deltaKP*(optPrice)/(B*StrikePrice*F))
+  VL <- sum(KC$VL) + sum(KP$VL)
+  VE <- sum(KC$VL) + sum(KP$VE)
+  Skewness <- (3*(VE-VL))/(VL^(3/2))
+  if(out == "VL") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VL = VL)
+  if(out == "VE") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VE = VE)
+  if(out == "Skewness") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),Skewness = Skewness)
+  if(out == "all") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VL = VL,VE = VE, Skewness = Skewness)
+  return(ans)
+  }
+#-----------------------------------------
+# Help functions for trapezoidal approach
+#-----------------------------------------
 .VC = function(K,S){
   return((2*(1 - log(K/S)))/(K^2))
 }
