@@ -1,5 +1,7 @@
 #' @export Realized_Skewness
+#' @importFrom zoo coredata index
 Realized_Skewness <- function(LE_contracts,HQreturns,cluster = NULL){
+  HQreturns = data_frame(date = zoo::index(HQreturns),return = zoo::coredata(HQreturns))
   if(!is.null(cluster)){
     ans <- foreach(x = 1:length(unique(LE_contracts$date)),.packages = "OptSK",
                    .export = c("LE_contracts","HQreturns"),.combine = "rbind") %dopar%{
@@ -11,7 +13,7 @@ Realized_Skewness <- function(LE_contracts,HQreturns,cluster = NULL){
         select(date,maturity,VE) %>%
         mutate(deltaVE = ifelse(maturity == max(maturity),VE,VE-lag(VE))) %>%
         group_by(date) %>%
-        mutate(ret = match(HQreturns,date)) %>%
+        mutate(ret = matchRet(HQreturns,date)) %>%
         mutate(rv = 2*(exp(ret)-1-ret)) %>%
         mutate(rs = 3*deltaVE*(exp(ret)-1) + 6*(2-2*exp(ret) + ret + ret*exp(ret))) %>%
         ungroup()
@@ -31,7 +33,7 @@ Realized_Skewness <- function(LE_contracts,HQreturns,cluster = NULL){
                          select(date,maturity,VE) %>%
                          mutate(deltaVE = ifelse(maturity == max(maturity),VE,VE-lag(VE))) %>%
                          group_by(date) %>%
-                         mutate(ret = match(HQreturns,date)) %>%
+                         mutate(ret = matchRet(HQreturns,date)) %>%
                          mutate(rv = 2*(exp(ret)-1-ret)) %>%
                          mutate(rs = 3*deltaVE*(exp(ret)-1) + 6*(2-2*exp(ret) + ret + ret*exp(ret))) %>%
                          ungroup()
@@ -46,7 +48,7 @@ Realized_Skewness <- function(LE_contracts,HQreturns,cluster = NULL){
 #------------
 # Help function to match the daily return series and the day at which we are calculating realized skewness
 #----------
-match <- function(ret,Date){
+matchRet <- function(ret,Date){
   ans <- ret %>%
     filter(date == Date) %>%
     select(return)
