@@ -3,6 +3,7 @@
 export(BKM_intepolation)
 export(BKM_trapezoidal)
 export(ImpliedMoments)
+export(LE_contract)
 export(arbitrageBounds)
 export(datafilter)
 export(interpolate)

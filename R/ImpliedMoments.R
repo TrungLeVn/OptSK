@@ -8,9 +8,10 @@ ImpliedMoments <- function(optdta,moments = NULL,method = NULL,cluster = NULL){
   if(!as.logical(sum(ExpChoice == valid.choices)))
     stop("\nOptSk-->error: Invalid choices of moments.\n", call. = FALSE)
   if(is.null(method)) method = "Intepolation"
+  DateUniq <- unique(optdta$date)
   if(!is.null(cluster)){
-    ans = foreach(x = 1:length(unique(optdta$date)),.packages = c("OptSK"),.export = c("optdta"),.combine = "rbind") %dopar% {
-      data <- filter(optdta,date == unique(date)[x])
+    ans = foreach(x = 1:length(DateUniq),.packages = c("OptSK"),.export = c("DateUniq","optdta","method","ExpChoice"),.combine = "rbind") %dopar% {
+      data <- filter(optdta,date == DateUniq[x])
       ans <- data %>% distinct(date,maturity)
       if(!is.na(match("Var",ExpChoice) == 1)) {
         if(method == "Intepolation"){

@@ -2,6 +2,7 @@
 #' @export arbitrageBounds
 #' @export BKM_intepolation
 #' @export BKM_trapezoidal
+#' @export LE_contract
 #' @import RQuantLib
 #' @importFrom pracma pchipfun pchip
 interpolate <- function(date,maturity,zerodata){
@@ -56,11 +57,10 @@ BKM_intepolation <- function(mnes,vol,k=NULL,m = NULL,rate,mat,out){
   mu = er - 1 - er*V/2 - er*W/6  - er*X/24
   Var = er*V - mu^2
   Skew = (er*W - 3*mu*er*V + 2*mu^3)/(er*V - mu^2)^(3/2)
-  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2 - 3
+  Kurt = ((er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2) - 3
   ans <- ifelse(out == 1,Var,ifelse(out == 2,Skew,Kurt))
   return(ans)
 }
-
 BKM_trapezoidal = function(optdta,rate,mat,out){
   er = exp(rate*mat)
   S  = unique(optdta$SpotPrice)
@@ -93,44 +93,89 @@ BKM_trapezoidal = function(optdta,rate,mat,out){
   mu = er - 1 - er*V/2 - er*W/6  - er*X/24
   Var = er*V - mu^2
   Skew = (er*W - 3*mu*er*V + 2*mu^3)/(er*V - mu^2)^(3/2)
-  Kurt = (er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2- 3
+  Kurt = ((er*X - 4*mu*W + 6*er*mu^2*V - mu^4)/(er*V - mu^2)^2)- 3
   ans <- ifelse(out == 1,Var,ifelse(out == 2,Skew,Kurt))
   return(ans)
 }
-
-LE_contract = function(optdta,rate,mat,out=NULL){
-  er = exp(mat*rate)
-  S  = unique(optdta$SpotPrice)
-  B = 1/er
-  F = S*er
+LE_contract = function(optdta,cluster = NULL, out=NULL){
   if(is.null(out)) out = "all"
-  KC <- optdta %>%
-    filter(Type == "C") %>%
-    select(StrikePrice,optPrice) %>%
-    mutate(deltaKC = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
-                           ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
-                                  0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
-    group_by(StrikePrice) %>%
-    mutate(VL = 2*deltaKC*(optPrice)/(B*StrikePrice^2)) %>%
-    mutate(VE = 2*deltaKC*(optPrice)/(B*StrikePrice*F))
-  KP <- optdta %>%
-    filter(Type == "P") %>%
-    select(StrikePrice,optPrice) %>%
-    mutate(deltaKP = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
-                            ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
-                                   0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
-    group_by(StrikePrice) %>%
-    mutate(VL = 2*deltaKP*(optPrice)/(B*StrikePrice^2)) %>%
-    mutate(VE = 2*deltaKP*(optPrice)/(B*StrikePrice*F))
-  VL <- sum(KC$VL) + sum(KP$VL)
-  VE <- sum(KC$VL) + sum(KP$VE)
-  Skewness <- (3*(VE-VL))/(VL^(3/2))
-  if(out == "VL") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VL = VL)
-  if(out == "VE") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VE = VE)
-  if(out == "Skewness") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),Skewness = Skewness)
-  if(out == "all") ans <- data_frame(date = unique(optdta$date),maturity = unique(optdta$maturity),VL = VL,VE = VE, Skewness = Skewness)
-  return(ans)
+  if(!is.null(cluster)){
+    ans = foreach(x = 1:length(unique(optdta$date)),.packages = c("OptSK"),.export = c("optdta","out"),.combine = "rbind") %dopar% {
+    daydata <- filter(optdta,date == unique(date)[x])
+    ans <- daydata %>% distinct(date,expDate,maturity)
+    LE_contracts <- foreach(i = 1:length(unique(daydata$maturity)),.combine = "rbind")%do%{
+      tempdata <- filter(daydata,maturity == unique(maturity)[i])
+      mat <- unique(tempdata$maturity)/365
+      rate <- unique(tempdata$RfRate)
+      er = exp(mat*rate)
+      S  = unique(tempdata$SpotPrice)
+      B = 1/er
+      F = S*er
+      KC <- tempdata %>%
+        filter(Type == "C") %>%
+        select(StrikePrice,optPrice) %>%
+        mutate(deltaKC = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                                ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                       0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+        group_by(StrikePrice) %>%
+        mutate(VL = 2*deltaKC*(optPrice)/(B*StrikePrice^2)) %>%
+        mutate(VE = 2*deltaKC*(optPrice)/(B*StrikePrice*F))
+      KP <- tempdata %>%
+        filter(Type == "P") %>%
+        select(StrikePrice,optPrice) %>%
+        mutate(deltaKP = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                                ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                       0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+        group_by(StrikePrice) %>%
+        mutate(VL = 2*deltaKP*(optPrice)/(B*StrikePrice^2)) %>%
+        mutate(VE = 2*deltaKP*(optPrice)/(B*StrikePrice*F))
+      VL <- sum(KC$VL) + sum(KP$VL)
+      VE <- sum(KC$VL) + sum(KP$VE)
+      ImpSkewness <- (3*(VE-VL))/(VL^(3/2))
+      LE_contracts <- data_frame(date = unique(tempdata$date),expDate = unique(tempdata$expDate),maturity = unique(tempdata$maturity),VL = VL, VE = VE, ImpSkewness = ImpSkewness)
+    }
+    ans<- left_join(ans,LE_contracts,by = c("date", "expDate", "maturity"))
+    }
+  } else {
+    ans = foreach(x = 1:length(unique(optdta$date)),.combine = "rbind") %do% {
+      daydata <- filter(optdta,date == unique(date)[x])
+      ans <- daydata %>% distinct(date,expDate,maturity)
+      LE_contracts <- foreach(i = 1:length(unique(daydata$maturity)),.combine = "rbind")%do%{
+        tempdata <- filter(daydata,maturity == unique(maturity)[i])
+        mat <- unique(tempdata$maturity)/365
+        rate <- unique(tempdata$RfRate)
+        er = exp(mat*rate)
+        S  = unique(tempdata$SpotPrice)
+        B = 1/er
+        F = S*er
+        KC <- tempdata %>%
+          filter(Type == "C") %>%
+          select(StrikePrice,optPrice) %>%
+          mutate(deltaKC = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                                  ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                         0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+          group_by(StrikePrice) %>%
+          mutate(VL = 2*deltaKC*(optPrice)/(B*StrikePrice^2)) %>%
+          mutate(VE = 2*deltaKC*(optPrice)/(B*StrikePrice*F))
+        KP <- tempdata %>%
+          filter(Type == "P") %>%
+          select(StrikePrice,optPrice) %>%
+          mutate(deltaKP = ifelse(StrikePrice == min(StrikePrice),lead(StrikePrice)- StrikePrice,
+                                  ifelse(StrikePrice == max(StrikePrice),StrikePrice-lag(StrikePrice),
+                                         0.5*(lead(StrikePrice)-lag(StrikePrice))))) %>%
+          group_by(StrikePrice) %>%
+          mutate(VL = 2*deltaKP*(optPrice)/(B*StrikePrice^2)) %>%
+          mutate(VE = 2*deltaKP*(optPrice)/(B*StrikePrice*F))
+        VL <- sum(KC$VL) + sum(KP$VL)
+        VE <- sum(KC$VL) + sum(KP$VE)
+        ImpSkewness <- (3*(VE-VL))/(VL^(3/2))
+        LE_contracts <- data_frame(date = unique(tempdata$date),expDate = unique(tempdata$expDate),maturity = unique(tempdata$maturity),VL = VL, VE = VE, ImpSkewness = ImpSkewness)
+      }
+      ans<- left_join(ans,LE_contracts,by = c("date", "expDate", "maturity"))
+    }
   }
+return(ans)
+}
 #-----------------------------------------
 # Help functions for trapezoidal approach
 #-----------------------------------------
